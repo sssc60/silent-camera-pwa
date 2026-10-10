@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111316">
+  <meta name="description" content="撮影データを端末内だけで扱う、個人用カメラ。">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="手元カメラ">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>手元カメラ — Personal Camera</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <!-- 使い方: カメラを起動 → 写真 / 動画を選ぶ → 撮影 → 共有して保存。 -->
+  <main class="camera-app">
+    <header class="app-header">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><h1>手元カメラ<span>PERSONAL CAMERA</span></h1></div>
+      <span class="privacy-label">端末内で処理</span>
+    </header>
+
+    <section class="viewfinder" aria-label="カメラと撮影プレビュー">
+      <video id="camera-video" autoplay muted playsinline aria-label="撮影中のカメラ映像" hidden></video>
+      <img id="photo-preview" alt="撮影した写真のプレビュー" hidden>
+      <!-- 再生は利用者の操作のみ。動画プレビューの音声も初期値はミュート。 -->
+      <video id="video-preview" controls muted playsinline preload="metadata" aria-label="撮影した動画のプレビュー" hidden></video>
+      <div id="empty-state" class="empty-state">
+        <span class="camera-illustration" aria-hidden="true"><span></span></span>
+        <h2>いまを、手元に。</h2>
+        <p>写真も動画も、この端末の中だけで。<br>撮影データをサーバーへ送信しません。</p>
+        <button id="start-camera" class="button primary">カメラを起動</button>
+        <small>初回はカメラの許可が必要です</small>
+      </div>
+      <div class="viewfinder-top">
+        <span id="camera-status" class="status-badge" role="status"><span class="status-dot" aria-hidden="true"></span><span id="camera-status-text">カメラ停止中</span></span>
+        <span id="recording-status" class="recording-badge" role="status" hidden><span aria-hidden="true">●</span> 録画中 <span id="elapsed">00:00</span></span>
+      </div>
+      <div id="live-caption" class="live-caption" hidden>背面カメラ</div>
+      <span class="frame-corner top-left" aria-hidden="true"></span>
+      <span class="frame-corner bottom-right" aria-hidden="true"></span>
+    </section>
+
+    <section class="controls" aria-label="撮影操作">
+      <p id="message" class="message" role="status" aria-live="polite">カメラはまだ起動していません。</p>
+      <div id="capture-controls">
+        <div class="mode-switch" role="group" aria-label="撮影モード">
+          <button id="photo-mode" class="mode-button selected" aria-pressed="true">写真</button>
+          <button id="video-mode" class="mode-button" aria-pressed="false">動画</button>
+        </div>
+        <div class="capture-row">
+          <button id="switch-camera" class="round-button" aria-label="前面・背面カメラを切り替え" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8a8 8 0 0 1 14-2l2 2M20 3v5h-5M20 16A8 8 0 0 1 6 18l-2-2M4 21v-5h5"/></svg><span>切り替え</span></button>
+          <button id="capture" class="shutter" aria-label="写真を撮影" disabled><span class="shutter-core" aria-hidden="true"></span></button>
+          <button id="stop-camera" class="round-button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/></svg><span>カメラ停止</span></button>
+        </div>
+        <div class="capture-options">
+          <span id="capture-hint">JPEG · 元の解像度</span>
+          <label id="audio-option" class="audio-option" hidden><input id="audio-enabled" type="checkbox"><span class="toggle" aria-hidden="true"></span><span>動画の音声</span><strong id="audio-label">なし</strong></label>
+        </div>
+      </div>
+      <div id="preview-controls" class="preview-controls" hidden>
+        <p id="file-details" class="file-details"></p>
+        <button id="share-save" class="button primary">共有して保存</button>
+        <button id="retake" class="button secondary">撮り直し</button>
+        <p class="save-note">共有シートで保存先を選んでください。<br>ファイル共有に対応していない場合はダウンロードします。</p>
+      </div>
+    </section>
+
+    <footer class="app-footer"><span class="footer-dot" aria-hidden="true"></span>広告なし · 解析なし · 撮影データの送信なし<p>撮影内容は一時的なメモリに保持されます。<br>撮り直し・ページ終了で失われるため、先に保存してください。</p></footer>
+    <noscript>このカメラを使うには JavaScript を有効にしてください。</noscript>
+  </main>
+</body>
+</html>
