@@ -3,7 +3,7 @@
  * 撮影 Blob、写真、動画、API 応答などは保存も送信もしません。
  */
 'use strict';
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE_PREFIX = 'temoto-camera-shell-';
 const CACHE_NAME = CACHE_PREFIX + VERSION;
 const SHELL = [

@@ -1,7 +1,8 @@
 /* 設定・使い方:
  * HTTPSで配信してください（PC開発時はlocalhostも利用可能）。外部依存はありません。
  * カメラ起動 → 写真/動画 → 撮影 → 共有して保存。音声は録画開始前に選択します。
- * JPEG_QUALITY と MIME_CANDIDATES は下記で調整できます。
+ * JPEG_QUALITY、MAX_ZOOM、MIME_CANDIDATES は下記で調整できます。
+ * 連続撮影中はプレビュー小窓でライブ映像を表示。非表示時には必ず停止します。
  * 撮影データはメモリと一時Blob URLだけに保持し、永続保存・通信は行いません。
  * サイト独自のシャッター音・操作音は一切再生しません。
  */
@@ -9,6 +10,7 @@
 
 (() => {
   const JPEG_QUALITY = 0.92;
+  const MAX_ZOOM = 4; // デジタルズーム。光学ズームではなく中央の切り出しです。
   // iPhone SafariのMP4を優先。固定拡張子にせず、実際の出力MIMEを確認します。
   const MIME_CANDIDATES = [
     'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -28,6 +30,10 @@
     audioLabel: $('audio-label'), hint: $('capture-hint'), captureControls: $('capture-controls'),
     previewControls: $('preview-controls'), details: $('file-details'), share: $('share-save'),
     retake: $('retake'), viewfinder: document.querySelector('.viewfinder'),
+    canvas: $('zoom-preview'), zoomControls: $('zoom-controls'), zoom: $('zoom-level'),
+    zoomValue: $('zoom-value'), zoomIn: $('zoom-in'), zoomOut: $('zoom-out'), zoomReset: $('zoom-reset'),
+    expand: $('expand-view'), continuous: $('continuous'), previewStop: $('preview-stop-camera'),
+    download: $('download-save'),
   };
   let mode = 'photo';
   let facing = 'environment';
@@ -42,6 +48,80 @@
   let recordingStarted = 0;
   let clock = null;
   let stopWatchdog = null;
+  let zoom = 1;
+  let frameRequest = null;
+  let lastFrameTime = 0;
+  let digitalRecordingStream = null;
+  let videoZoomAvailable = typeof ui.canvas.captureStream === 'function';
+  const pointers = new Map();
+  let pinch = null;
+  const frameContext = ui.canvas.getContext('2d', { alpha: false });
+  videoZoomAvailable = videoZoomAvailable && Boolean(frameContext);
+
+  function cameraIsActive() {
+    return Boolean(cameraStream?.getVideoTracks().some((track) => track.readyState === 'live'));
+  }
+
+  function drawZoomedFrame(context, width, height) {
+    const sourceWidth = ui.camera.videoWidth;
+    const sourceHeight = ui.camera.videoHeight;
+    if (!sourceWidth || !sourceHeight) return false;
+    // 録画途中の回転では出力サイズを固定し、中央を切り出して歪みを防ぎます。
+    const ratio = width / height;
+    const cropWidth = Math.min(sourceWidth, sourceHeight * ratio) / zoom;
+    const cropHeight = cropWidth / ratio;
+    context.drawImage(ui.camera, (sourceWidth - cropWidth) / 2, (sourceHeight - cropHeight) / 2,
+      cropWidth, cropHeight, 0, 0, width, height);
+    return true;
+  }
+
+  function drawLiveCanvas() {
+    if (!frameContext || !ui.camera.videoWidth || ui.camera.readyState < 2) return;
+    if (!digitalRecordingStream && (ui.canvas.width !== ui.camera.videoWidth || ui.canvas.height !== ui.camera.videoHeight)) {
+      ui.canvas.width = ui.camera.videoWidth;
+      ui.canvas.height = ui.camera.videoHeight;
+    }
+    drawZoomedFrame(frameContext, ui.canvas.width, ui.canvas.height);
+  }
+
+  function renderFrames(time) {
+    if (!cameraIsActive() || document.visibilityState === 'hidden') {
+      frameRequest = null;
+      return;
+    }
+    if ((zoom > 1 || digitalRecordingStream) && time - lastFrameTime >= 1000 / 30) {
+      try {
+        drawLiveCanvas();
+      } catch {
+        if (recorder) recorder.onerror?.(new Event('error'));
+        else {
+          zoom = 1;
+          render();
+          tell('ズーム映像を表示できませんでした。1倍で撮影してください。', true);
+        }
+      }
+      lastFrameTime = time;
+    }
+    if (cameraIsActive()) frameRequest = requestAnimationFrame(renderFrames);
+  }
+
+  function setZoom(value) {
+    if (!cameraIsActive() || capturedFile || busy || (mode === 'video' && !videoZoomAvailable)) return;
+    zoom = Math.round(Math.min(MAX_ZOOM, Math.max(1, Number(value))) * 10) / 10;
+    try {
+      drawLiveCanvas();
+    } catch {
+      zoom = 1;
+      if (recorder) recorder.onerror?.(new Event('error'));
+      else tell('ズーム映像を表示できませんでした。1倍で撮影してください。', true);
+    }
+    render();
+  }
+
+  function stopDigitalRecordingStream() {
+    digitalRecordingStream?.getTracks().forEach((track) => track.stop());
+    digitalRecordingStream = null;
+  }
 
   function tell(message, error = false) {
     ui.message.textContent = message;
@@ -63,10 +143,14 @@
   }
 
   function render() {
-    const cameraActive = Boolean(cameraStream?.getVideoTracks().some((track) => track.readyState === 'live'));
+    const cameraActive = cameraIsActive();
     const recording = phase === 'recording';
     const preview = Boolean(capturedFile);
-    ui.camera.hidden = !cameraActive || preview;
+    const canvasLive = zoom > 1 || Boolean(digitalRecordingStream);
+    // iOSの元映像の再生を止めないよう、ズームCanvasは表示中のvideoに重ねます。
+    ui.camera.hidden = !cameraActive;
+    ui.camera.setAttribute('aria-hidden', String(canvasLive));
+    ui.canvas.hidden = !cameraActive || !canvasLive;
     ui.empty.hidden = cameraActive || preview;
     ui.start.disabled = busy;
     ui.start.textContent = phase === 'starting' ? 'カメラを起動中…' : 'カメラを起動';
@@ -74,9 +158,26 @@
     ui.statusText.textContent = cameraActive ? (micStream ? 'カメラ・マイク使用中' : 'カメラ使用中') : 'カメラ停止中';
     ui.recording.hidden = !recording;
     ui.viewfinder.classList.toggle('recording', recording);
+    ui.viewfinder.classList.toggle('live', cameraActive && !preview);
+    ui.viewfinder.classList.toggle('session-preview', cameraActive && preview);
     ui.caption.hidden = !cameraActive;
-    ui.caption.textContent = facing === 'user' ? '前面カメラ · プレビューは鏡表示' : '背面カメラ';
+    ui.caption.textContent = preview ? 'ライブ · カメラ維持中' : facing === 'user' ? '前面カメラ · プレビューは鏡表示' : '背面カメラ';
     ui.camera.classList.toggle('mirrored', facing === 'user');
+    ui.canvas.classList.toggle('mirrored', facing === 'user');
+    ui.zoomControls.hidden = !cameraActive || preview;
+    const zoomDisabled = busy || !frameContext || (mode === 'video' && !videoZoomAvailable);
+    ui.zoom.disabled = zoomDisabled;
+    ui.zoomIn.disabled = zoomDisabled || zoom >= MAX_ZOOM;
+    ui.zoomOut.disabled = ui.zoomReset.disabled = zoomDisabled || zoom <= 1;
+    ui.zoom.value = String(zoom);
+    ui.zoomValue.textContent = `${zoom.toFixed(1)}×`;
+    ui.expand.hidden = !cameraActive || preview;
+    ui.expand.textContent = document.body.classList.contains('expanded') ? '通常表示に戻す' : '画面を広げる';
+    ui.expand.setAttribute('aria-pressed', String(document.body.classList.contains('expanded')));
+    ui.continuous.disabled = busy || recording;
+    ui.previewStop.hidden = !cameraActive || !preview;
+    ui.previewStop.disabled = busy;
+    if (!cameraActive || preview) document.body.classList.remove('expanded');
     ui.captureControls.hidden = preview;
     ui.previewControls.hidden = !preview;
     ui.photoMode.classList.toggle('selected', mode === 'photo');
@@ -93,9 +194,9 @@
     ui.audioOption.hidden = mode !== 'video';
     ui.audio.disabled = busy || recording;
     ui.audioLabel.textContent = ui.audio.checked ? 'あり' : 'なし';
-    ui.hint.textContent = mode === 'photo' ? 'JPEG · 元の解像度' : '形式を自動選択';
+    ui.hint.textContent = mode === 'photo' ? 'JPEG · ピンチでズーム' : '形式を自動選択';
     ui.hint.hidden = mode === 'video';
-    ui.share.disabled = ui.retake.disabled = busy;
+    ui.share.disabled = ui.retake.disabled = ui.download.disabled = busy;
   }
 
   function stopMicrophone() {
@@ -104,11 +205,17 @@
   }
 
   function releaseCamera() {
+    stopDigitalRecordingStream();
+    cancelAnimationFrame(frameRequest);
+    frameRequest = null;
+    pointers.clear();
+    pinch = null;
     if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
     cameraStream = null;
     stopMicrophone();
     ui.camera.pause();
     ui.camera.srcObject = null;
+    ui.canvas.width = ui.canvas.height = 0;
   }
 
   function clearCapture() {
@@ -174,6 +281,8 @@
       render();
       await ui.camera.play();
       if (token !== operation) return;
+      if (zoom > 1) drawLiveCanvas();
+      if (frameRequest === null) frameRequest = requestAnimationFrame(renderFrames);
       phase = 'live';
       tell(mode === 'video' && !supportedMime() ? 'このブラウザは対応する動画形式がありません。写真撮影を利用してください。' : 'カメラ使用中です。撮影ボタンで撮影できます。');
     } catch (error) {
@@ -197,7 +306,9 @@
 
   function showCapture(blob, extension, description) {
     clearCapture();
-    releaseCamera();
+    stopDigitalRecordingStream();
+    stopMicrophone();
+    if (!ui.continuous.checked || document.visibilityState === 'hidden') releaseCamera();
     capturedFile = new File([blob], `temoto-${timestamp()}.${extension}`, { type: blob.type, lastModified: Date.now() });
     capturedURL = URL.createObjectURL(capturedFile);
     if (extension === 'jpg') {
@@ -213,7 +324,7 @@
     const size = capturedFile.size >= 1024 * 1024 ? `${(capturedFile.size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(capturedFile.size / 1024)} KB`;
     ui.details.textContent = `${description} · ${size}`;
     render();
-    tell('撮影しました。カメラは停止しています。保存先を選んで保存してください。');
+    tell(cameraIsActive() ? '撮影しました。小窓でカメラを維持しています。続けて撮るか、保存を選んでください。' : '撮影しました。カメラは停止しています。保存を選んでください。');
   }
 
   async function takePhoto() {
@@ -235,14 +346,14 @@
     try {
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Canvas unavailable');
-      context.drawImage(ui.camera, 0, 0, width, height);
-      releaseCamera();
+      drawZoomedFrame(context, width, height);
+      if (!ui.continuous.checked) releaseCamera();
       render();
       tell('写真を処理しています…');
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
       if (token !== operation) return;
       if (!blob || blob.type !== 'image/jpeg') throw new Error('JPEG encoding failed');
-      showCapture(blob, 'jpg', `JPEG · ${width} × ${height}`);
+      showCapture(blob, 'jpg', `JPEG · ${width} × ${height} · ${zoom.toFixed(1)}倍`);
     } catch {
       if (token !== operation) return;
       clearCapture();
@@ -303,7 +414,21 @@
         }
       }
       if (token !== operation || !cameraStream) return;
-      const stream = new MediaStream([...cameraStream.getVideoTracks(), ...(micStream?.getAudioTracks() || [])]);
+      let videoTracks = cameraStream.getVideoTracks();
+      if (videoZoomAvailable) {
+        try {
+          drawLiveCanvas();
+          digitalRecordingStream = ui.canvas.captureStream(30);
+          videoTracks = digitalRecordingStream.getVideoTracks();
+          if (!videoTracks.length) throw new Error('Canvas recording unavailable');
+        } catch {
+          stopDigitalRecordingStream();
+          videoZoomAvailable = false;
+          if (zoom > 1) throw new Error('Zoom recording unavailable');
+          videoTracks = cameraStream.getVideoTracks();
+        }
+      }
+      const stream = new MediaStream([...videoTracks, ...(micStream?.getAudioTracks() || [])]);
       const currentRecorder = new MediaRecorder(stream, { mimeType });
       const chunks = [];
       let failed = false;
@@ -315,13 +440,15 @@
         if (recorder !== currentRecorder) return;
         failed = true;
         tell('録画に失敗しました。撮り直してください。', true);
-        stopRecording();
+        stopRecording(false);
       };
       currentRecorder.onstop = () => {
         if (recorder !== currentRecorder) return;
         clearTimers();
         recorder = null;
-        releaseCamera();
+        stopDigitalRecordingStream();
+        stopMicrophone();
+        if (!ui.continuous.checked || document.visibilityState === 'hidden') releaseCamera();
         busy = false;
         phase = 'idle';
         try {
@@ -357,8 +484,11 @@
         recorder = null;
       }
       stopMicrophone();
+      stopDigitalRecordingStream();
+      const zoomRecordingFailed = !videoZoomAvailable && zoom > 1;
+      if (!videoZoomAvailable) zoom = 1;
       phase = cameraStream ? 'live' : 'idle';
-      tell(requestingMicrophone ? permissionError(error, 'マイク') : '録画を開始できませんでした。音声設定を確認して、もう一度お試しください。', true);
+      tell(requestingMicrophone ? permissionError(error, 'マイク') : zoomRecordingFailed ? 'ズームした動画を録画できませんでした。1倍に戻しましたので、もう一度お試しください。' : '録画を開始できませんでした。音声設定を確認して、もう一度お試しください。', true);
     } finally {
       if (token === operation) {
         busy = false;
@@ -367,7 +497,7 @@
     }
   }
 
-  function stopRecording() {
+  function stopRecording(keepCamera = ui.continuous.checked && document.visibilityState !== 'hidden') {
     if (!recorder || phase === 'stopping') return;
     const currentRecorder = recorder;
     busy = true;
@@ -376,8 +506,10 @@
     tell('録画を終了して動画を処理しています…');
     try {
       if (currentRecorder.state !== 'inactive') currentRecorder.stop();
-      // onstopの処理を待つ間もカメラ・マイクは即座に停止します。
-      releaseCamera();
+      // 録画とマイクは即停止。連続撮影時はライブ小窓用カメラだけ維持します。
+      stopMicrophone();
+      stopDigitalRecordingStream();
+      if (!keepCamera) releaseCamera();
       render();
       stopWatchdog = setTimeout(() => {
         if (recorder !== currentRecorder) return;
@@ -403,7 +535,10 @@
 
   function interrupt(message) {
     ++operation;
-    if (recorder) stopRecording();
+    if (recorder) {
+      stopRecording(false);
+      releaseCamera();
+    }
     else {
       releaseCamera();
       // 共有シートで画面が非表示になっても、完了するまでは撮り直しを許可しません。
@@ -415,7 +550,7 @@
     if (message) tell(message);
   }
 
-  function downloadCapture() {
+  function downloadCapture(fallback = false) {
     if (!capturedFile || !capturedURL) return;
     const anchor = document.createElement('a');
     anchor.href = capturedURL;
@@ -425,7 +560,7 @@
     anchor.click();
     anchor.remove();
     // SafariがURLを読み取るまで保持し、撮り直し・ページ終了時に解放します。
-    tell('ファイル共有に対応していないため、ダウンロードを開始しました。Safariのダウンロード一覧を確認してください。写真アプリへの保存は手動で行ってください。');
+    tell(`${fallback ? 'ファイル共有を利用できないため、' : ''}ダウンロードを開始しました。Safariのダウンロード一覧を確認してください。写真アプリへの保存は「共有して保存」を使ってください。`);
   }
 
   async function shareCapture() {
@@ -436,7 +571,7 @@
       canShare = typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare({ files });
     } catch { /* canShare自体が失敗した場合もダウンロードを使います。 */ }
     if (!canShare) {
-      downloadCapture();
+      downloadCapture(true);
       return;
     }
     busy = true;
@@ -471,6 +606,41 @@
     startCamera();
   });
   ui.stop.addEventListener('click', () => interrupt('カメラとマイクを停止しました。再開するにはカメラを起動してください。'));
+  ui.previewStop.addEventListener('click', () => interrupt('カメラを停止しました。撮影データはプレビューに残っています。'));
+  ui.continuous.addEventListener('change', () => {
+    if (capturedFile && !ui.continuous.checked) releaseCamera();
+    render();
+  });
+  ui.zoom.addEventListener('input', () => setZoom(ui.zoom.value));
+  ui.zoomIn.addEventListener('click', () => setZoom(zoom + 0.5));
+  ui.zoomOut.addEventListener('click', () => setZoom(zoom - 0.5));
+  ui.zoomReset.addEventListener('click', () => setZoom(1));
+  ui.expand.addEventListener('click', () => {
+    document.body.classList.toggle('expanded');
+    render();
+  });
+  // ピンチ操作はライブ映像の範囲だけ。ページ全体の拡大やアクセス許可は変更しません。
+  const distance = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  ui.viewfinder.addEventListener('pointerdown', (event) => {
+    if (!cameraIsActive() || capturedFile || event.target.closest('button, input, label')) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    ui.viewfinder.setPointerCapture(event.pointerId);
+    if (pointers.size === 2) pinch = { distance: distance(), zoom };
+  });
+  ui.viewfinder.addEventListener('pointermove', (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 2 && pinch?.distance > 0) setZoom(pinch.zoom * distance() / pinch.distance);
+  });
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    ui.viewfinder.addEventListener(name, (event) => {
+      pointers.delete(event.pointerId);
+      if (pointers.size < 2) pinch = null;
+    });
+  }
   ui.capture.addEventListener('click', () => {
     if (phase === 'recording') stopRecording();
     else if (mode === 'photo') takePhoto();
@@ -480,21 +650,27 @@
     button.addEventListener('click', () => {
       if (busy || recorder) return;
       mode = value;
+      if (mode === 'video' && !videoZoomAvailable) zoom = 1;
       render();
-      tell(mode === 'video' && !supportedMime() ? 'このブラウザでは対応する動画形式がありません。写真撮影を利用してください。' : mode === 'video' ? '動画の音声を選び、赤いボタンで録画を開始します。' : '写真はJPEG形式で撮影します。');
+      tell(mode === 'video' && !supportedMime() ? 'このブラウザでは対応する動画形式がありません。写真撮影を利用してください。' : mode === 'video' && !videoZoomAvailable ? 'このブラウザでは動画のズームを利用できません。1倍で録画できます。写真ではズームできます。' : mode === 'video' ? '動画の音声を選び、赤いボタンで録画を開始します。' : '写真はJPEG形式で撮影します。');
     });
   }
   ui.audio.addEventListener('change', render);
   ui.share.addEventListener('click', () => {
-    if (ui.share.dataset.download === 'true') downloadCapture();
+    if (ui.share.dataset.download === 'true') downloadCapture(true);
     else shareCapture();
   });
+  ui.download.addEventListener('click', () => downloadCapture());
   ui.retake.addEventListener('click', () => {
     if (busy) return;
     ++operation;
     clearCapture();
     phase = 'idle';
-    startCamera();
+    if (cameraIsActive()) {
+      phase = 'live';
+      render();
+      tell('カメラをそのまま使って次の撮影ができます。');
+    } else startCamera();
   });
 
   // 非表示・ページ離脱時は必ず停止。復帰時は自動で撮影を再開しません。

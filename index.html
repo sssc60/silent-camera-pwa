@@ -26,6 +26,7 @@
 
     <section class="viewfinder" aria-label="カメラと撮影プレビュー">
       <video id="camera-video" autoplay muted playsinline aria-label="撮影中のカメラ映像" hidden></video>
+      <canvas id="zoom-preview" aria-label="ズームしたカメラのライブ映像" hidden></canvas>
       <img id="photo-preview" alt="撮影した写真のプレビュー" hidden>
       <!-- 再生は利用者の操作のみ。動画プレビューの音声も初期値はミュート。 -->
       <video id="video-preview" controls muted playsinline preload="metadata" aria-label="撮影した動画のプレビュー" hidden></video>
@@ -41,12 +42,20 @@
         <span id="recording-status" class="recording-badge" role="status" hidden><span aria-hidden="true">●</span> 録画中 <span id="elapsed">00:00</span></span>
       </div>
       <div id="live-caption" class="live-caption" hidden>背面カメラ</div>
+      <button id="expand-view" class="view-button" aria-pressed="false" hidden>画面を広げる</button>
+      <div id="zoom-controls" class="zoom-controls" role="group" aria-label="カメラのズーム" hidden>
+        <button id="zoom-out" aria-label="ズームを縮小">−</button>
+        <label><span class="visually-hidden">ズーム倍率</span><input id="zoom-level" type="range" min="1" max="4" step="0.1" value="1"></label>
+        <button id="zoom-in" aria-label="ズームを拡大">＋</button>
+        <button id="zoom-reset" aria-label="ズームを1倍に戻す"><output id="zoom-value">1.0×</output></button>
+      </div>
       <span class="frame-corner top-left" aria-hidden="true"></span>
       <span class="frame-corner bottom-right" aria-hidden="true"></span>
     </section>
 
     <section class="controls" aria-label="撮影操作">
       <p id="message" class="message" role="status" aria-live="polite">カメラはまだ起動していません。</p>
+      <label class="session-option"><input id="continuous" type="checkbox" checked><span>連続撮影</span><small>撮影後も小窓でカメラを維持</small></label>
       <div id="capture-controls">
         <div class="mode-switch" role="group" aria-label="撮影モード">
           <button id="photo-mode" class="mode-button selected" aria-pressed="true">写真</button>
@@ -65,12 +74,15 @@
       <div id="preview-controls" class="preview-controls" hidden>
         <p id="file-details" class="file-details"></p>
         <button id="share-save" class="button primary">共有して保存</button>
+        <button id="download-save" class="button secondary">ファイルへ保存（ダウンロード）</button>
         <button id="retake" class="button secondary">撮り直し</button>
-        <p class="save-note">共有シートで保存先を選んでください。<br>ファイル共有に対応していない場合はダウンロードします。</p>
+        <button id="preview-stop-camera" class="button secondary" hidden>カメラ停止</button>
+        <p class="save-note">写真アプリへの保存は「共有して保存」から。<br>ダウンロードはSafariの設定に従って保存します。</p>
       </div>
     </section>
 
     <footer class="app-footer"><span class="footer-dot" aria-hidden="true"></span>広告なし · 解析なし · 撮影データの送信なし<p>撮影内容は一時的なメモリに保持されます。<br>撮り直し・ページ終了で失われるため、先に保存してください。</p></footer>
+    <details class="permission-help"><summary>毎回の確認を減らすには</summary><p>Safariのページメニューから「Webサイトの設定」を開き、「カメラ」を「許可」にしてください。iOSの版によって設定の場所が異なります。音声ありの動画ではマイクも許可してください。</p><p>「ファイルへ保存」なら共有シートの保存先選択を省けます。Safariの「ダウンロード」設定で固定の保存先を選んでください。写真アプリへの保存先選択とOSの確認画面は、このアプリから省略できません。</p></details>
     <noscript>このカメラを使うには JavaScript を有効にしてください。</noscript>
   </main>
 </body>

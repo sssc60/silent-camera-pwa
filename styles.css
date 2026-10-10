@@ -7,18 +7,44 @@ button, input { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; cursor: pointer; }
 button:disabled { opacity: .38; cursor: default; }
 button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 5px; }
-.camera-app { width: 100%; max-width: 640px; margin: auto; padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
-.app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 24px; }
+.camera-app { width: 100%; max-width: 720px; margin: auto; padding: max(12px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 8px 12px; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-mark { width: 31px; height: 31px; border: 1px solid var(--accent); border-radius: 10px; display: grid; place-items: center; }
 .brand-mark::after { content: ""; width: 12px; height: 12px; border: 2px solid var(--accent); border-radius: 50%; }
 h1 { font-size: 19px; letter-spacing: .06em; margin: 0; font-weight: 600; }
 h1 span { display: block; color: var(--muted); font-size: 8px; letter-spacing: .22em; margin-top: 5px; }
 .privacy-label { color: var(--accent); font-size: 10px; letter-spacing: .04em; border: 1px solid #514938; border-radius: 20px; padding: 7px 10px; white-space: nowrap; }
-.viewfinder { position: relative; background: #07090b; border: 1px solid var(--line); border-radius: 22px; overflow: hidden; aspect-ratio: 3 / 4; min-height: 300px; display: flex; align-items: center; justify-content: center; }
-.viewfinder video, .viewfinder img { display: block; width: 100%; height: 100%; position: absolute; inset: 0; object-fit: contain; }
+.viewfinder { position: relative; background: #07090b; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; height: clamp(340px, 62vh, 720px); height: clamp(340px, 62dvh, 720px); display: flex; align-items: center; justify-content: center; }
+.viewfinder video, .viewfinder img, .viewfinder canvas { display: block; width: 100%; height: 100%; position: absolute; inset: 0; object-fit: contain; }
+.viewfinder canvas { background: #07090b; }
+.viewfinder.live { touch-action: none; }
 /* 前面のライブ映像だけを鏡表示にします。保存する写真・動画は元の向きです。 */
-#camera-video.mirrored { transform: scaleX(-1); }
+#camera-video.mirrored, #zoom-preview.mirrored { transform: scaleX(-1); }
+.viewfinder.session-preview #camera-video, .viewfinder.session-preview #zoom-preview { inset: auto 12px 74px auto; width: 90px; height: 120px; border: 2px solid #a9d5b4; border-radius: 9px; background: #07090b; z-index: 2; pointer-events: none; }
+.session-preview .live-caption { left: auto; right: 12px; bottom: 54px; transform: none; font-size: 9px; padding: 4px 6px; z-index: 2; }
+.controls { padding: 0 12px; }
+.view-button { position: absolute; right: 12px; bottom: 12px; border: 1px solid #454950; background: #101316dd; color: var(--text); border-radius: 9px; min-height: 44px; padding: 8px 12px; font-size: 11px; z-index: 3; }
+.viewfinder.live .live-caption { bottom: 118px; }
+.zoom-controls { position: absolute; bottom: 66px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 5px; padding: 4px 8px; background: #101316e8; border: 1px solid #454950; border-radius: 30px; z-index: 3; width: min(300px, calc(100% - 24px)); }
+.zoom-controls button { min-width: 44px; min-height: 44px; border: 0; border-radius: 22px; background: transparent; color: var(--text); }
+.zoom-controls label { flex: 1; min-width: 0; }
+.zoom-controls input { width: 100%; min-height: 44px; margin: 0; accent-color: var(--accent); }
+#zoom-reset { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.session-option { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 7px; min-height: 44px; font-size: 11px; color: var(--text); margin-bottom: 8px; }
+.session-option input { width: 20px; height: 20px; accent-color: var(--accent); }
+.session-option small { font-size: 9px; color: var(--muted); }
+.permission-help { margin: 14px 12px 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+.permission-help summary { min-height: 44px; cursor: pointer; display: list-item; padding: 12px 0; }
+/* iPhoneのFullscreen APIに依存せず、アプリ内の表示だけを広げます。 */
+body.expanded .camera-app { height: 100vh; height: 100dvh; max-width: none; padding: max(4px, env(safe-area-inset-top)) max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 0; }
+body.expanded .app-header, body.expanded .app-footer, body.expanded .permission-help, body.expanded .session-option { display: none; }
+body.expanded .viewfinder { flex: 1; width: 100%; min-height: 150px; height: auto; aspect-ratio: auto; max-height: none; border-radius: 8px; }
+body.expanded .controls { flex-shrink: 0; padding: 0 10px; }
+body.expanded .message { margin: 4px 0; min-height: 20px; font-size: 10px; }
+body.expanded .mode-switch { margin-bottom: 4px; }
+body.expanded .capture-options { min-height: 30px; margin-top: 0; }
 .empty-state { padding: 70px 22px; text-align: center; }
 .camera-illustration { display: block; width: 72px; height: 54px; border: 1px solid #696457; border-radius: 15px; margin: 0 auto 30px; position: relative; }
 .camera-illustration::before { content: ""; position: absolute; top: -7px; left: 22px; width: 27px; height: 7px; border: 1px solid #696457; border-bottom: none; border-radius: 5px 5px 0 0; }
@@ -70,17 +96,21 @@ h1 span { display: block; color: var(--muted); font-size: 8px; letter-spacing: .
 .app-footer { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 20px; color: var(--muted); text-align: center; font-size: 10px; line-height: 1.8; }
 .footer-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
 .app-footer p { color: #858b95; font-size: 10px; margin: 8px 0 0; }
-@media (max-width: 360px) { .camera-app { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); } .privacy-label { font-size: 9px; } .viewfinder { border-radius: 16px; } }
+@media (max-width: 360px) { .privacy-label { font-size: 9px; } }
 @media (orientation: landscape) and (min-width: 650px) {
   .camera-app { max-width: 1200px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); column-gap: 28px; padding-top: max(16px, env(safe-area-inset-top)); }
   .app-header { grid-column: 1 / -1; margin-bottom: 16px; }
-  .viewfinder { aspect-ratio: 4 / 3; min-height: 250px; max-height: 70vh; max-height: 70dvh; }
+  .viewfinder { width: 100%; height: 74vh; height: 74dvh; min-height: 250px; }
   .controls { align-self: center; }
   .app-footer { grid-column: 1 / -1; }
+  .permission-help { grid-column: 1 / -1; }
   .empty-state { padding: 50px 20px 18px; }
   .empty-state h2 { font-size: 20px; margin-bottom: 8px; }
   .empty-state p { font-size: 11px; line-height: 1.7; margin-bottom: 14px; }
   .empty-state small { margin-top: 10px; }
   .camera-illustration { display: none; }
+  body.expanded .camera-app { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; }
+  body.expanded .viewfinder { height: 100%; grid-column: 1; }
+  body.expanded .controls { grid-column: 2; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

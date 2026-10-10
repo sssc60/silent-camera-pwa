@@ -93,7 +93,9 @@ class CameraSmoke(unittest.TestCase):
         expect(self.page.locator('#camera-status-text')).to_have_text('カメラ使用中')
         self.page.wait_for_function("() => document.querySelector('#camera-video').videoWidth > 0 && document.querySelector('#camera-video').readyState >= 2")
 
-    def photo(self):
+    def photo(self, continuous=False):
+        if not continuous:
+            self.page.locator('#continuous').uncheck()
         self.start()
         dimensions = self.page.locator('#camera-video').evaluate('(v) => [v.videoWidth, v.videoHeight]')
         self.page.locator('#capture').click()
@@ -178,6 +180,7 @@ class CameraSmoke(unittest.TestCase):
 
     def record_and_check(self, audio):
         self.open("Object.defineProperty(navigator, 'canShare', {value: () => false})")
+        self.page.locator('#continuous').uncheck()
         self.start()
         self.page.locator('#video-mode').click()
         if audio:
@@ -334,6 +337,115 @@ class CameraSmoke(unittest.TestCase):
         self.page.reload()
         expect(self.page.locator('#start-camera')).to_be_visible()
         expect(self.page.locator('#camera-status-text')).to_have_text('カメラ停止中')
+
+    def test_continuous_photos_reuse_visible_camera(self):
+        self.open()
+        expect(self.page.locator('#continuous')).to_be_checked()
+        self.photo(continuous=True)
+        expect(self.page.locator('#camera-status-text')).to_have_text('カメラ使用中')
+        expect(self.page.locator('#camera-video')).to_be_visible()
+        expect(self.page.locator('#live-caption')).to_have_text('ライブ · カメラ維持中')
+        self.assertTrue(self.page.evaluate("testStreams[0].getVideoTracks()[0].readyState === 'live'"))
+        self.page.locator('#retake').click()
+        expect(self.page.locator('#capture')).to_be_enabled()
+        self.assertEqual(self.page.evaluate('testStreams.length'), 1)
+        self.page.locator('#capture').click()
+        expect(self.page.locator('#photo-preview')).to_be_visible()
+        self.assertEqual(self.page.evaluate('testStreams.length'), 1)
+        self.page.locator('#preview-stop-camera').click()
+        self.assert_tracks_stopped()
+        expect(self.page.locator('#photo-preview')).to_be_visible()
+
+    def test_continuous_preview_stops_on_hide(self):
+        self.open()
+        self.photo(continuous=True)
+        self.hide()
+        self.assert_tracks_stopped()
+        expect(self.page.locator('#photo-preview')).to_be_visible()
+        expect(self.page.locator('#camera-video')).to_be_hidden()
+
+    def test_zoom_applies_to_photo_pixels_and_original_dimensions(self):
+        self.open("window.cropCalls = []; const draw = CanvasRenderingContext2D.prototype.drawImage; CanvasRenderingContext2D.prototype.drawImage = function (...args) { if (args[0] instanceof HTMLVideoElement) cropCalls.push(args.slice(1)); return draw.apply(this, args); };")
+        self.start()
+        width, height = self.page.locator('#camera-video').evaluate('(v) => [v.videoWidth, v.videoHeight]')
+        self.page.locator('#zoom-level').fill('2')
+        expect(self.page.locator('#zoom-preview')).to_be_visible()
+        expect(self.page.locator('#zoom-value')).to_have_text('2.0×')
+        self.page.locator('#capture').click()
+        expect(self.page.locator('#photo-preview')).to_be_visible()
+        self.page.wait_for_function("() => document.querySelector('#photo-preview').naturalWidth > 0")
+        self.assertEqual(self.page.locator('#photo-preview').evaluate('(v) => [v.naturalWidth, v.naturalHeight]'), [width, height])
+        calls = self.page.evaluate('cropCalls')
+        self.assertTrue(any(call == [width / 4, height / 4, width / 2, height / 2, 0, 0, width, height] for call in calls))
+        expect(self.page.locator('#file-details')).to_contain_text('2.0倍')
+
+    def test_live_pinch_and_reset(self):
+        self.open()
+        self.start()
+        box = self.page.locator('.viewfinder').bounding_box()
+        x, y = box['x'] + box['width'] / 2, box['y'] + 150
+        session = self.context.new_cdp_session(self.page)
+        session.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': x-40, 'y': y, 'id': 1}, {'x': x+40, 'y': y, 'id': 2}]})
+        session.send('Input.dispatchTouchEvent', {'type': 'touchMove', 'touchPoints': [{'x': x-80, 'y': y, 'id': 1}, {'x': x+80, 'y': y, 'id': 2}]})
+        session.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+        expect(self.page.locator('#zoom-value')).to_have_text('2.0×')
+        self.page.locator('#zoom-reset').click()
+        expect(self.page.locator('#zoom-value')).to_have_text('1.0×')
+        self.assertEqual(self.page.evaluate('visualViewport.scale'), 1)
+
+    def test_expanded_view_uses_more_screen_and_exits_at_preview(self):
+        self.open()
+        self.start()
+        original = self.page.locator('.viewfinder').bounding_box()
+        self.assertGreater(original['width'], 370)
+        self.page.locator('#expand-view').click()
+        enlarged = self.page.locator('.viewfinder').bounding_box()
+        self.assertGreater(enlarged['height'], original['height'])
+        self.assertLessEqual(self.page.locator('#capture').bounding_box()['y'] + 80, 844)
+        self.page.locator('#capture').click()
+        expect(self.page.locator('#photo-preview')).to_be_visible()
+        self.assertFalse(self.page.evaluate("document.body.classList.contains('expanded')"))
+
+    def test_direct_download_skips_share_sheet(self):
+        self.open("window.shareCalls = 0; Object.defineProperty(navigator, 'canShare', {value: () => true}); Object.defineProperty(navigator, 'share', {value: async () => { shareCalls++; }});")
+        self.photo()
+        with self.page.expect_download() as event:
+            self.page.locator('#download-save').click()
+        self.assertTrue(event.value.suggested_filename.endswith('.jpg'))
+        self.assertEqual(self.page.evaluate('shareCalls'), 0)
+        expect(self.page.locator('#message')).to_contain_text('ダウンロードを開始')
+
+    def test_zoom_video_keeps_camera_but_stops_microphone(self):
+        self.open("window.recordedCanvasStreams = []; const capture = HTMLCanvasElement.prototype.captureStream; HTMLCanvasElement.prototype.captureStream = function (...args) { const stream = capture.apply(this, args); recordedCanvasStreams.push(stream); return stream; };")
+        self.start()
+        self.page.locator('#video-mode').click()
+        self.page.locator('#audio-enabled').check()
+        self.page.locator('#zoom-level').fill('2')
+        self.page.locator('#capture').click()
+        expect(self.page.locator('#recording-status')).to_be_visible()
+        self.page.wait_for_function("() => document.querySelector('#elapsed').textContent !== '00:00'")
+        self.page.locator('#zoom-in').click()
+        expect(self.page.locator('#zoom-value')).to_have_text('2.5×')
+        self.page.locator('#capture').click()
+        expect(self.page.locator('#video-preview')).to_be_visible()
+        expect(self.page.locator('#camera-status-text')).to_have_text('カメラ使用中')
+        self.assertTrue(self.page.evaluate("testStreams.flatMap(s => s.getAudioTracks()).every(t => t.readyState === 'ended')"))
+        self.assertTrue(self.page.evaluate("recordedCanvasStreams.flatMap(s => s.getTracks()).every(t => t.readyState === 'ended')"))
+        self.page.wait_for_function("() => document.querySelector('#video-preview').videoWidth > 0")
+        self.assertGreater(self.page.locator('#video-preview').evaluate('(v) => v.videoWidth'), 0)
+        self.page.locator('#retake').click()
+        self.assertEqual(self.page.evaluate('testStreams.length'), 2)  # カメラ1回 + マイク1回
+
+    def test_missing_canvas_recording_resets_video_zoom(self):
+        self.open("HTMLCanvasElement.prototype.captureStream = undefined;")
+        self.start()
+        self.page.locator('#zoom-in').click()
+        expect(self.page.locator('#zoom-value')).to_have_text('1.5×')
+        self.page.locator('#video-mode').click()
+        expect(self.page.locator('#zoom-value')).to_have_text('1.0×')
+        expect(self.page.locator('#zoom-level')).to_be_disabled()
+        expect(self.page.locator('#capture')).to_be_enabled()
+        expect(self.page.locator('#message')).to_contain_text('動画のズームを利用できません')
 
 
 if __name__ == '__main__':
